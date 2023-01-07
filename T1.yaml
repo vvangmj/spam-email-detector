@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Metadata:
+    Generator: "former2"
+Description: ""
+Resources:
+    IAMRole2:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/service-role/"
+            RoleName: "check-emails-role-ls6hu3mh"
+            AssumeRolePolicyDocument: 
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Principal:
+                    Service:
+                      - lambda.amazonaws.com
+                  Action: "sts:AssumeRole"
+            MaxSessionDuration: 3600
+            ManagedPolicyArns: 
+              - !Ref IAMManagedPolicy
+              - "arn:aws:iam::aws:policy/AmazonSESFullAccess"
+              - "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+              - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    LambdaLayerVersion:
+        Type: "AWS::Lambda::LayerVersion"
+        Properties:
+            Description: ""
+            LayerName: "mailparser-layer"
+            Content: 
+                S3Bucket: "6998-hw3-lf-files"
+                S3Key: "check-emails/mailparser-layer.zip"
+
+    LambdaLayerVersion2:
+        Type: "AWS::Lambda::LayerVersion"
+        Properties:
+            Description: ""
+            LayerName: "numpy-layer"
+            Content: 
+                S3Bucket: "6998-hw3-lf-files"
+                S3Key: "check-emails/numpy-lambda-layer.zip"
+
+    IAMManagedPolicy:
+        Type: "AWS::IAM::ManagedPolicy"
+        Properties:
+            ManagedPolicyName: "AWSLambdaBasicExecutionRole-33c90c63-8533-41d4-8fd0-eb3e47e61c0f"
+            Path: "/service-role/"
+            PolicyDocument: !Sub |
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": "logs:CreateLogGroup",
+                            "Resource": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents"
+                            ],
+                            "Resource": [
+                                "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/check-emails:*"
+                            ]
+                        }
+                    ]
+                }
+
+    LambdaFunction:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            Environment: 
+                Variables: 
+                    ENDPOINT_NAME:
+                      Ref: EndpointName
+                    SENDER: 
+                      Ref: DomainEmail
+            FunctionName: "check-emails"
+            Handler: "lambda_function.lambda_handler"
+            Architectures: 
+              - "x86_64"
+            Code: 
+                S3Bucket: "6998-hw3-lf-files"
+                S3Key: "check-emails/check-emails.zip"
+            MemorySize: 128
+            Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/service-role/check-emails-role-ls6hu3mh"
+            Runtime: "python3.9"
+            Timeout: 10
+            TracingConfig: 
+                Mode: "PassThrough"
+            Layers: 
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:numpy-layer:8"
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:mailparser-layer:8"
+            EphemeralStorage: 
+                Size: 512
+
+    S3Bucket:
+        Type: "AWS::S3::Bucket"
+        Properties:
+            BucketName: "6998-hw3-b1-cf"
+            NotificationConfiguration: 
+                LambdaConfigurations: 
+                  - 
+                    Event: "s3:ObjectCreated:Put"
+                    Filter: 
+                        S3Key: 
+                            Rules: 
+                              - 
+                                Name: "Prefix"
+                                Value: ""
+                              - 
+                                Name: "Suffix"
+                                Value: ""
+                    Function: !GetAtt LambdaFunction.Arn
+    S3BucketPolicy:
+        Type: "AWS::S3::BucketPolicy"
+        Properties:
+            Bucket: !Ref S3Bucket
+            PolicyDocument: 
+                Version: "2012-10-17"
+                Statement: 
+                  - 
+                    Sid: "AllowSESPuts-1669220047541"
+                    Effect: "Allow"
+                    Principal: 
+                        Service: "ses.amazonaws.com"
+                    Action: "s3:PutObject"
+                    Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+                    Condition: 
+                        StringEquals: 
+                            "AWS:SourceAccount": !Ref AWS::AccountId
+                        StringLike: 
+                            "AWS:SourceArn": "arn:aws:ses:*"
+
+    LambdaPermission:
+        Type: "AWS::Lambda::Permission"
+        Properties:
+            Action: "lambda:InvokeFunction"
+            FunctionName: !GetAtt LambdaFunction.Arn
+            Principal: "s3.amazonaws.com"
+            SourceArn: !Sub "arn:aws:s3:::${S3Bucket}"
+
+    
+
+    SESReceiptRule:
+        Type: "AWS::SES::ReceiptRule"
+        Properties:
+            Rule: 
+                ScanEnabled: false
+                Recipients: 
+                  - Ref: DomainName
+                Actions: 
+                  - 
+                    S3Action: 
+                        BucketName: !Ref S3Bucket
+                Enabled: true
+                Name: "access-s3"
+                TlsPolicy: "Optional"
+            RuleSetName: "email-rule-set"
+
+    SESReceiptRuleSet:
+        Type: "AWS::SES::ReceiptRuleSet"
+        Properties:
+            RuleSetName: "email-rule-set"
+Parameters:
+  EndpointName:
+    Type: String
+    Default: "sms-spam-classifier-mxnet-2022-12-06-00-12-19-251"
+    AllowedValues:
+      - "sms-spam-classifier-mxnet-2022-11-22-19-27-30-655"
+      - "sms-spam-classifier-mxnet-2022-12-06-00-12-19-251"
+  DomainName:
+    Type: String
+    Default: "arthur.services"
+    AllowedValues:
+      - "arthur.services"
+  DomainEmail:
+    Type: String
+    Default: "spam.detect@arthur.services"
+    AllowedValues:
+      - "spam.detect@arthur.services"
